@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CustomsFlow - AI Agents</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        .landing-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 40px;
+        }
+        .agent-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            transition: all 0.3s;
+            cursor: pointer;
+            text-decoration: none;
+            color: inherit;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .agent-card:hover {
+            background: rgba(255,255,255,0.05);
+            border-color: rgba(255,255,255,0.1);
+            transform: translateY(-2px);
+        }
+        .agent-icon {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            color: var(--accent-blue);
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-particles" id="bgParticles"></div>
+    <div class="container" style="max-width: 900px; text-align: center;">
+        <header class="header">
+            <h1>CustomsFlow Agents</h1>
+            <p class="subtitle" style="margin-left: auto; margin-right: auto;">Select thousands of documents processed automatically</p>
+        </header>
+
+        <div class="landing-grid">
+            <a href="/agent1" class="agent-card">
+                <div class="agent-icon">⚖️</div>
+                <h2 style="font-size: 1.5rem; margin-bottom: 10px;">Agent 1: Requirement Detector</h2>
+                <p style="color: var(--text-secondary); font-size: 0.95rem;">Analyzes shipping documents (Invoice, PL, BOL) and determines if an Insurance Certificate is required based on Incoterms.</p>
+            </a>
+            
+            <a href="/agent2" class="agent-card">
+                <div class="agent-icon">📄</div>
+                <h2 style="font-size: 1.5rem; margin-bottom: 10px;">Agent 2: BOL Extractor</h2>
+                <p style="color: var(--text-secondary); font-size: 0.95rem;">Extracts exactly 13 critical data points from raw Bill of Lading text into structured JSON format.</p>
+            </a>
+        </div>
+    </div>
+
+    <script>
+        (function initParticles() {
+            const container = document.getElementById('bgParticles');
+            for (let i = 0; i < 30; i++) {
+                const dot = document.createElement('div');
+                dot.className = 'particle';
+                dot.style.left = `${Math.random() * 100}%`;
+                dot.style.top = `${Math.random() * 100}%`;
+                dot.style.animationDelay = `${Math.random() * 8}s`;
+                dot.style.animationDuration = `${6 + Math.random() * 8}s`;
+                container.appendChild(dot);
+            }
+        })();
+    </script>
+</body>
+</html>

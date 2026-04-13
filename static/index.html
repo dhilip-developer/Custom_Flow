@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Cross-Verification</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        
+        <!-- Input Section -->
+        <div class="input-section" id="inputSection">
+            <h2>Submit Documents for Verification</h2>
+            <p class="subtitle">Paste the extracted JSON data for each available document below.</p>
+            
+            <form id="verifyForm">
+                <div class="form-group">
+                    <label>Bill of Lading <span class="tag">BL</span></label>
+                    <textarea id="bill_of_lading" placeholder='{"BILL NO.": "...", "GROSS WEIGHT": "..."}'></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Invoice <span class="tag">INV</span></label>
+                    <textarea id="invoice" placeholder='{"INVOICE NUMBER AND DATE": "...", "TOTAL VALUE": "..."}'></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Packing List <span class="tag">PL</span></label>
+                    <textarea id="packing_list" placeholder='{"GROSS WEIGHT": "...", "QUANTITY": "..."}'></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Freight Certificate <span class="tag optional">Optional</span></label>
+                    <textarea id="freight_certificate" placeholder='{"HBL NO.": "..."}'></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Insurance Certificate <span class="tag optional">Optional</span></label>
+                    <textarea id="insurance_certificate" placeholder='{"INVOICE TOTAL VALUE": "..."}'></textarea>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="submit" id="submitBtn" class="btn-primary">
+                        <svg class="icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path><polyline points="9 11 12 14 22 4"></polyline></svg>
+                        Verify Documents
+                    </button>
+                    <button type="button" id="clearBtn" class="btn-secondary">Clear</button>
+                </div>
+                <div id="errorBox" class="error-box hidden"></div>
+            </form>
+        </div>
+
+        <!-- Results Section -->
+        <div class="results-section hidden" id="resultsSection">
+            <div class="results-header">
+                <div class="header-content">
+                    <h1>Document Cross-Verification</h1>
+                    <p class="header-desc">Comparing extracted data from BL, Packing List, Invoice, and Freight Certificate</p>
+                    <div class="documents-analyzed">
+                        <span class="label">Documents analyzed:</span>
+                        <div class="doc-chips" id="docChips">
+                            <!-- Injected via JS -->
+                        </div>
+                    </div>
+                </div>
+                <div class="verdict-banner" id="verdictBanner">
+                    <svg viewBox="0 0 24 24" class="verdict-icon"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                    <span id="mismatchCountText">0 mismatch(es) found</span>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table class="verification-table">
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Source 1</th>
+                            <th>Source 2</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsTableBody">
+                        <!-- Rows injected via JS -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="form-actions" style="margin-top: 2rem;">
+                 <button type="button" id="newVerificationBtn" class="btn-secondary">New Verification</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

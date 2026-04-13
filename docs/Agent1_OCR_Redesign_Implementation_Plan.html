@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent 1 OCR Extractor — Implementation Plan</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --danger: #dc2626;
+            --warning: #f59e0b;
+            --success: #059669;
+            --bg: #ffffff;
+            --text: #1e293b;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --code-bg: #f1f5f9;
+            --table-header: #f8fafc;
+            --highlight: #eff6ff;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+            font-size: 14px;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 32px;
+        }
+
+        @media print {
+            body { padding: 20px; font-size: 11px; line-height: 1.5; }
+            .page-break { page-break-before: always; }
+            .no-print { display: none; }
+            h1 { font-size: 22px; }
+            h2 { font-size: 16px; }
+            h3 { font-size: 13px; }
+        }
+
+        .doc-header {
+            border-bottom: 3px solid var(--primary);
+            padding-bottom: 24px;
+            margin-bottom: 32px;
+        }
+        .doc-header h1 {
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--primary-dark);
+            margin-bottom: 4px;
+        }
+        .doc-header .subtitle {
+            font-size: 16px;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+        .doc-meta {
+            display: flex;
+            gap: 24px;
+            margin-top: 12px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        h2 {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text);
+            margin-top: 36px;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--border);
+        }
+        h3 {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+            margin-top: 24px;
+            margin-bottom: 10px;
+        }
+        h4 {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 20px;
+            margin-bottom: 8px;
+        }
+
+        p { margin-bottom: 12px; }
+        ul, ol { margin-left: 24px; margin-bottom: 12px; }
+        li { margin-bottom: 4px; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 13px;
+        }
+        th, td {
+            padding: 10px 14px;
+            text-align: left;
+            border: 1px solid var(--border);
+        }
+        th {
+            background: var(--table-header);
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            color: var(--text-muted);
+        }
+        tr:nth-child(even) { background: #fafbfc; }
+
+        code {
+            background: var(--code-bg);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 12px;
+        }
+        pre {
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 16px 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 12px 0;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        pre code { background: none; padding: 0; color: inherit; }
+
+        .callout {
+            padding: 14px 18px;
+            border-radius: 8px;
+            margin: 16px 0;
+            border-left: 4px solid;
+            font-size: 13px;
+        }
+        .callout-info { background: var(--highlight); border-color: var(--primary); color: #1e40af; }
+        .callout-success { background: #ecfdf5; border-color: var(--success); color: #065f46; }
+        .callout-warning { background: #fffbeb; border-color: var(--warning); color: #92400e; }
+        .callout-danger { background: #fef2f2; border-color: var(--danger); color: #991b1b; }
+        .callout strong { display: block; margin-bottom: 4px; }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 100px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-red { background: #fef2f2; color: #dc2626; }
+        .badge-green { background: #ecfdf5; color: #059669; }
+        .badge-yellow { background: #fffbeb; color: #d97706; }
+        .badge-blue { background: #eff6ff; color: #2563eb; }
+
+        /* ─── FLOW DIAGRAM ─── */
+        .flow-container {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px 24px;
+            margin: 24px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0;
+        }
+        .flow-box {
+            border-radius: 10px;
+            padding: 14px 24px;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 500;
+            width: 520px;
+            max-width: 100%;
+            position: relative;
+        }
+        .flow-phase {
+            background: white;
+            border: 2px solid var(--primary);
+            color: var(--text);
+            box-shadow: 0 2px 8px rgba(37,99,235,0.08);
+        }
+        .flow-phase .phase-label {
+            display: block;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--primary);
+            margin-bottom: 4px;
+        }
+        .flow-phase .phase-detail {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+        .flow-decision {
+            background: #fef3c7;
+            border: 2px solid #f59e0b;
+            transform: rotate(0deg);
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 13px;
+            width: 260px;
+        }
+        .flow-result-keep {
+            background: #d1fae5;
+            border: 2px solid #059669;
+            font-weight: 600;
+            font-size: 12px;
+            width: auto;
+            padding: 10px 20px;
+        }
+        .flow-result-skip {
+            background: #fee2e2;
+            border: 2px solid #dc2626;
+            font-weight: 600;
+            font-size: 12px;
+            width: auto;
+            padding: 10px 20px;
+        }
+        .flow-arrow {
+            font-size: 22px;
+            color: var(--primary);
+            line-height: 1;
+            padding: 4px 0;
+            user-select: none;
+        }
+        .flow-arrow-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 500;
+            font-style: italic;
+        }
+        .flow-branch {
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+            justify-content: center;
+            width: 100%;
+            flex-wrap: wrap;
+        }
+        .flow-branch-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+        .flow-upload {
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            color: white;
+            border: none;
+            font-weight: 700;
+            font-size: 14px;
+            box-shadow: 0 4px 12px rgba(37,99,235,0.25);
+        }
+        .flow-final {
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+            color: white;
+            border: none;
+            font-weight: 700;
+            box-shadow: 0 4px 12px rgba(5,150,105,0.25);
+        }
+
+        .highlight-row { background: #eff6ff !important; font-weight: 500; }
+
+        hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 32px 0;
+        }
+
+        .toc {
+            background: var(--table-header);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px 24px;
+            margin: 24px 0;
+        }
+        .toc h3 { margin-top: 0; }
+        .toc ol { margin-left: 20px; }
+        .toc li { margin-bottom: 6px; }
+        .toc a { color: var(--primary); text-decoration: none; }
+        .toc a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- HEADER                                                        -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="doc-header">
+    <h1>Agent 1: Intelligent OCR Extractor</h1>
+    <div class="subtitle">Implementation Plan — "OCR First, Classify Second" Architecture</div>
+    <div class="doc-meta">
+        <span>📅 April 8, 2026</span>
+        <span>📁 CustomsFlow Multi-Agent System</span>
+        <span>🏷️ Version 2.0</span>
+        <span>👤 Prepared for Dhilip K</span>
+    </div>
+</div>
+
+<p class="no-print" style="background:#eff6ff;padding:12px 16px;border-radius:8px;border:1px solid #bfdbfe;font-size:13px;">
+    💡 <strong>To save as PDF:</strong> Press <code>Ctrl + P</code> → Select "Save as PDF" → Click Save.
+</p>
+
+<!-- TABLE OF CONTENTS -->
+<div class="toc">
+    <h3>📑 Table of Contents</h3>
+    <ol>
+        <li><a href="#s1">Overview & Core Insight</a></li>
+        <li><a href="#s2">Architecture Flow Diagram</a></li>
+        <li><a href="#s3">Phase-by-Phase Specification</a></li>
+        <li><a href="#s4">Title Detection Keywords</a></li>
+        <li><a href="#s5">Data Structures</a></li>
+        <li><a href="#s6">Core Function Implementations</a></li>
+        <li><a href="#s7">API Response Format</a></li>
+        <li><a href="#s8">Document AI Limits & Performance</a></li>
+        <li><a href="#s9">Risk Assessment & Mitigation</a></li>
+        <li><a href="#s10">File Change List</a></li>
+        <li><a href="#s11">Verification Plan</a></li>
+    </ol>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 1: OVERVIEW                                            -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2 id="s1">1. Overview & Core Insight</h2>
+
+<p>
+    Agent 1 is the OCR extraction engine of the customs pipeline. It receives a PDF upload (which may contain necessary customs documents mixed with unnecessary pages) and must extract text <strong>only from the relevant documents</strong> — Bill of Lading, Invoice, Packing List, Freight Certificate, and Insurance Certificate.
+</p>
+
+<p>
+    Agent 1 uses <strong>Google Document AI exclusively</strong> for all OCR processing. No Gemini AI is used in this agent — Gemini quota is reserved entirely for Agents 2–5 (classification, extraction, freight detection, cross-verification).
+</p>
+
+<div class="callout callout-info">
+    <strong>🧠 Core Insight</strong>
+    Document AI already returns per-page text natively. Each <code>document.pages[i]</code> contains <code>paragraphs</code>, <code>blocks</code>, <code>lines</code> with <code>textAnchor</code> offsets into the main <code>document.text</code>. We don't need to split the PDF into single pages for API calls — we just need to <strong>read the response intelligently</strong>.
+</div>
+
+<p>
+    The architecture follows a <strong>"OCR First, Classify Second"</strong> principle: the expensive network-bound OCR runs in parallel chunks, then the cheap CPU-bound classification runs sequentially in milliseconds with zero additional API calls.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 2: FLOW DIAGRAM                                        -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2 id="s2">2. Architecture Flow Diagram</h2>
+
+<div class="flow-container">
+    <!-- Upload -->
+    <div class="flow-box flow-upload">📄 Upload PDF</div>
+    <div class="flow-arrow">▼</div>
+
+    <!-- Phase 1 -->
+    <div class="flow-box flow-phase">
+        <span class="phase-label">Phase 1 — Parallel Chunk OCR</span>
+        Document AI • 5-page chunks • 3 parallel workers
+        <div class="phase-detail">Network-bound · Handles any PDF size by chunking under the 15-page/request limit</div>
+    </div>
+    <div class="flow-arrow">▼</div>
+
+    <!-- Phase 2 -->
+    <div class="flow-box flow-phase">
+        <span class="phase-label">Phase 2 — Per-Page Text Extraction</span>
+        CPU-only • read textAnchor offsets from response • ~5ms
+        <div class="phase-detail">Extracts individual page text from the Document AI response object — zero API calls</div>
+    </div>
+    <div class="flow-arrow">▼</div>
+
+    <!-- Phase 3 -->
+    <div class="flow-box flow-phase">
+        <span class="phase-label">Phase 3 — Sequential Title Scan</span>
+        Regex keyword matching • 0 API calls • ~2ms total
+        <div class="phase-detail">Scans first 5 lines of each page for document title keywords</div>
+    </div>
+    <div class="flow-arrow">▼</div>
+
+    <!-- Decision -->
+    <div class="flow-box flow-decision">
+        🔍 Page has document title?
+    </div>
+
+    <div style="height:8px"></div>
+
+    <!-- Branch -->
+    <div class="flow-branch">
+        <div class="flow-branch-item">
+            <div class="flow-arrow-label">Title matches BOL / Invoice / PL / FC / IC</div>
+            <div class="flow-arrow" style="color:#059669;">▼</div>
+            <div class="flow-box flow-result-keep">✅ KEEP — start new document group</div>
+        </div>
+        <div class="flow-branch-item">
+            <div class="flow-arrow-label">No title found</div>
+            <div class="flow-arrow" style="color:#f59e0b;">▼</div>
+            <div class="flow-box flow-decision" style="width:200px;font-size:12px;padding:10px 14px;">
+                Previous page<br>was relevant?
+            </div>
+            <div style="display:flex;gap:12px;margin-top:6px;">
+                <div class="flow-branch-item">
+                    <div class="flow-arrow-label">Yes</div>
+                    <div class="flow-arrow" style="color:#059669;font-size:16px;">▼</div>
+                    <div class="flow-box flow-result-keep" style="font-size:11px;padding:8px 14px;">✅ KEEP<br>continuation page</div>
+                </div>
+                <div class="flow-branch-item">
+                    <div class="flow-arrow-label">No</div>
+                    <div class="flow-arrow" style="color:#dc2626;font-size:16px;">▼</div>
+                    <div class="flow-box flow-result-skip" style="font-size:11px;padding:8px 14px;">❌ SKIP</div>
+                </div>
+            </div>
+        </div>
+        <div class="flow-branch-item">
+            <div class="flow-arrow-label">Title = unknown / junk</div>
+            <div class="flow-arrow" style="color:#dc2626;">▼</div>
+            <div class="flow-box flow-result-skip">❌ SKIP — unnecessary page</div>
+        </div>
+    </div>
+
+    <div style="height:12px"></div>
+    <div class="flow-arrow" style="color:#059669;">▼</div>
+
+    <!-- Phase 4 -->
+    <div class="flow-box flow-final">
+        📦 Phase 4: Merge & Return — Grouped by document type
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 3: PHASE-BY-PHASE                                      -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2 id="s3">3. Phase-by-Phase Specification</h2>
+
+<h3>Phase 1 — Parallel Chunk OCR</h3>
+<table>
+    <tr><th>Attribute</th><th>Detail</th></tr>
+    <tr><td>API</td><td>Google Document AI — OCR Processor (sync/online mode)</td></tr>
+    <tr><td>Auth</td><td><code>google-credentials.json</code> service account</td></tr>
+    <tr><td>Chunk size</td><td>5 pages per chunk (safely under 15-page sync limit)</td></tr>
+    <tr><td>Parallelism</td><td>3 concurrent <code>ThreadPoolExecutor</code> workers</td></tr>
+    <tr><td>Retry policy</td><td>Exponential backoff: 2<sup>n</sup> seconds, max 3 retries on 503/429</td></tr>
+    <tr><td>Input</td><td>PDF file bytes + MIME type</td></tr>
+    <tr><td>Output</td><td>List of Document AI response objects — each containing <code>document.text</code> and <code>document.pages[]</code></td></tr>
+</table>
+
+<p><strong>How it works:</strong></p>
+<ol>
+    <li>Read total page count via <code>pypdf.PdfReader</code></li>
+    <li>If ≤5 pages → send as single request (no splitting)</li>
+    <li>If >5 pages → split into 5-page chunks using <code>PdfWriter</code></li>
+    <li>Submit all chunks to Document AI in parallel (3 workers)</li>
+    <li>Collect responses, ordered by original page position</li>
+</ol>
+
+<h3>Phase 2 — Per-Page Text Extraction</h3>
+<table>
+    <tr><th>Attribute</th><th>Detail</th></tr>
+    <tr><td>Cost</td><td>Zero — pure CPU operation</td></tr>
+    <tr><td>Time</td><td>~5ms for 100 pages</td></tr>
+    <tr><td>Input</td><td>Document AI response objects from Phase 1</td></tr>
+    <tr><td>Output</td><td><code>List[PageResult]</code> — one entry per physical page with <code>page_number</code>, <code>text</code>, <code>first_lines</code></td></tr>
+</table>
+
+<p><strong>How it works:</strong></p>
+<ol>
+    <li>For each response, iterate <code>document.pages[]</code></li>
+    <li>For each page, use <code>page.layout.textAnchor.textSegments[].startIndex / endIndex</code> to slice the page's text from <code>document.text</code></li>
+    <li>Extract the first 5 lines as <code>first_lines</code> (used for title detection)</li>
+    <li>Build <code>PageResult</code> objects with global page numbering</li>
+</ol>
+
+<h3>Phase 3 — Sequential Title Scan</h3>
+<table>
+    <tr><th>Attribute</th><th>Detail</th></tr>
+    <tr><td>Cost</td><td>Zero — pure regex, no API calls</td></tr>
+    <tr><td>Time</td><td>~2ms for 100 pages</td></tr>
+    <tr><td>Input</td><td><code>List[PageResult]</code> from Phase 2</td></tr>
+    <tr><td>Output</td><td>Pages grouped into document segments with type labels</td></tr>
+</table>
+
+<p><strong>Decision logic (applied sequentially, page by page):</strong></p>
+<ol>
+    <li><strong>Title matches a necessary document type</strong> → Start a new document group. Flush any previous group.</li>
+    <li><strong>No title found</strong> → Check if the previous page was part of a relevant group. If yes, this is a <strong>continuation page</strong> — append to that group. If no, skip.</li>
+    <li><strong>Title matches a junk pattern</strong> → Skip the page. Break the continuation chain so the next untitled page doesn't inherit a junk classification.</li>
+</ol>
+
+<h3>Phase 4 — Merge & Return</h3>
+<table>
+    <tr><th>Attribute</th><th>Detail</th></tr>
+    <tr><td>Cost</td><td>Zero — string concatenation</td></tr>
+    <tr><td>Time</td><td>~1ms</td></tr>
+    <tr><td>Input</td><td>Grouped page segments from Phase 3</td></tr>
+    <tr><td>Output</td><td><code>SmartExtractionResponse</code> JSON — documents grouped by type + skipped sections list</td></tr>
+</table>
+
+<p><strong>How it works:</strong></p>
+<ol>
+    <li>For each document group, merge all page texts into one continuous string</li>
+    <li>Record the page range (e.g., "4-6")</li>
+    <li>Consolidate consecutive skipped pages into range groups with skip reasons</li>
+    <li>Return structured JSON response</li>
+</ol>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 4: TITLE KEYWORDS                                      -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2 id="s4">4. Title Detection Keywords</h2>
+
+<p>The title scan checks the <strong>first 5 lines</strong> of each page (case-insensitive) against these patterns:</p>
+
+<h3>4.1 Necessary Document Titles (KEEP)</h3>
+<table>
+    <tr><th>Document Type</th><th>Regex Patterns</th></tr>
+    <tr>
+        <td><span class="badge badge-blue">Bill of Lading (BOL)</span></td>
+        <td><code>BILL\s+OF\s+LADING</code>, <code>\bB/L\b</code>, <code>OCEAN\s+BILL</code>, <code>MASTER\s+BILL</code>, <code>HOUSE\s+BILL</code>, <code>COMBINED\s+TRANSPORT</code>, <code>SEA\s+WAYBILL</code></td>
+    </tr>
+    <tr>
+        <td><span class="badge badge-green">Invoice</span></td>
+        <td><code>COMMERCIAL\s+INVOICE</code>, <code>\bINVOICE\b</code>, <code>PROFORMA\s+INVOICE</code>, <code>TAX\s+INVOICE</code></td>
+    </tr>
+    <tr>
+        <td><span class="badge badge-yellow">Packing List</span></td>
+        <td><code>PACKING\s+LIST</code>, <code>PACKING\s+SLIP</code>, <code>PACKING\s+NOTE</code>, <code>WEIGHT\s+LIST</code></td>
+    </tr>
+    <tr>
+        <td><span class="badge badge-red">Freight Certificate</span></td>
+        <td><code>FREIGHT\s+CERTIFICATE</code>, <code>FREIGHT\s+MEMO</code>, <code>FREIGHT\s+INVOICE</code></td>
+    </tr>
+    <tr>
+        <td><span class="badge badge-blue">Insurance Certificate</span></td>
+        <td><code>INSURANCE\s+CERTIFICATE</code>, <code>CERTIFICATE\s+OF\s+INSURANCE</code>, <code>INSURANCE\s+POLICY</code></td>
+    </tr>
+</table>
+
+<h3>4.2 Junk Document Titles (SKIP)</h3>
+<table>
+    <tr><th>Pattern</th><th>Example Documents Caught</th></tr>
+    <tr><td><code>COVER\s+LETTER</code></td><td>Cover letters, transmittals</td></tr>
+    <tr><td><code>\bFAX\b</code></td><td>Fax headers, fax confirmation sheets</td></tr>
+    <tr><td><code>TRANSMITTAL</code></td><td>Document transmittal slips</td></tr>
+    <tr><td><code>COMPLIANCE</code></td><td>Compliance declarations, regulatory forms</td></tr>
+    <tr><td><code>TERMS\s+AND\s+CONDITIONS</code></td><td>T&C pages often appended by shippers</td></tr>
+    <tr><td><code>BANK\s+DETAILS</code></td><td>Wire transfer / payment instruction sheets</td></tr>
+</table>
+
+<div class="callout callout-success">
+    <strong>🔒 Safe Default</strong>
+    If a page has no detected title and no preceding relevant group, it is skipped. If a page has no title but follows a relevant page, it is kept as a continuation. This ensures no necessary data is lost.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 5: DATA STRUCTURES                                     -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2 id="s5" class="page-break">5. Data Structures</h2>
+
+<pre><code># Internal processing model (not exposed in API)
+class PageResult:
+    page_number: int        # Global page number (1-indexed)
+    text: str               # Full OCR text of this page
+    first_lines: str        # First 5 lines — used for title detection
+    classified_as: str      # Set during Phase 3: doc type, "SKIP", or "CONTINUATION"
+
+
+# API response models (in models/schemas.py)
+
+class ExtractedDocument(BaseModel):
+    """One complete customs document extracted from the PDF."""
+    document_type: str      # "Bill of Lading (BOL)", "Invoice", etc.
+    page_range: str         # "1-3", "4-6"
+    text: str               # Full OCR text of all pages in this group
+
+class SkippedSection(BaseModel):
+    """Pages that were filtered out as unnecessary."""
+    page_range: str         # "9-12"
+    reason: str             # "No matching document title" or specific junk type
+
+class SmartExtractionResponse(BaseModel):
+    """Complete Agent 1 response."""
+    total_pages: int        # Total pages in the uploaded PDF
+    relevant_pages: int     # Pages that belong to necessary documents
+    skipped_pages: int      # Pages that were filtered out
+    documents: List[ExtractedDocument]
+    skipped_documents: List[SkippedSection]</code></pre>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 6: CORE FUNCTIONS                                      -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2 id="s6">6. Core Function Implementations</h2>
+
+<h3>6.1 Phase 1+2: _extract_per_page_text()</h3>
+<pre><code>def _extract_per_page_text(file_bytes: bytes, mime_type: str) -> List[PageResult]:
+    """
+    Sends PDF to Document AI in parallel 5-page chunks,
+    then extracts per-page text from the response using textAnchor offsets.
+    """
+    # 1. Split PDF into 5-page chunks
+    chunks = split_pdf_to_chunks(file_bytes, pages_per_chunk=5)
+    
+    # 2. Process chunks in parallel (3 workers, with retry)
+    results = [None] * len(chunks)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(_process_chunk_docai, chunk, mime_type): i
+            for i, chunk in enumerate(chunks)
+        }
+        for future in as_completed(futures):
+            idx = futures[future]
+            results[idx] = future.result()
+    
+    # 3. Extract per-page text from each response
+    all_pages = []
+    global_page_num = 0
+    for chunk_response in results:
+        full_text = chunk_response.document.text
+        for page in chunk_response.document.pages:
+            global_page_num += 1
+            page_text = _get_page_text(page, full_text)
+            lines = page_text.strip().split('\n')
+            all_pages.append(PageResult(
+                page_number=global_page_num,
+                text=page_text,
+                first_lines='\n'.join(lines[:5])
+            ))
+    
+    return all_pages</code></pre>
+
+<h3>6.2 Phase 3: _detect_page_title()</h3>
+<pre><code>TITLE_PATTERNS = {
+    "Bill of Lading (BOL)": [
+        r"BILL\s+OF\s+LADING", r"\bB/L\b", r"OCEAN\s+BILL",
+        r"MASTER\s+BILL", r"HOUSE\s+BILL", r"SEA\s+WAYBILL"
+    ],
+    "Invoice": [
+        r"COMMERCIAL\s+INVOICE", r"\bINVOICE\b",
+        r"PROFORMA\s+INVOICE", r"TAX\s+INVOICE"
+    ],
+    "Packing List": [
+        r"PACKING\s+LIST", r"PACKING\s+SLIP",
+        r"PACKING\s+NOTE", r"WEIGHT\s+LIST"
+    ],
+    "Freight Certificate": [r"FREIGHT\s+CERTIFICATE", r"FREIGHT\s+MEMO"],
+    "Insurance Certificate": [
+        r"INSURANCE\s+CERTIFICATE",
+        r"CERTIFICATE\s+OF\s+INSURANCE"
+    ],
+}
+
+JUNK_PATTERNS = [
+    r"COVER\s+LETTER", r"\bFAX\b", r"TRANSMITTAL",
+    r"COMPLIANCE", r"TERMS\s+AND\s+CONDITIONS", r"BANK\s+DETAILS"
+]
+
+def _detect_page_title(first_lines: str) -> Optional[str]:
+    """Pure regex — zero API calls, ~0.01ms per page."""
+    text_upper = first_lines.upper()
+    for doc_type, patterns in TITLE_PATTERNS.items():
+        if any(re.search(p, text_upper) for p in patterns):
+            return doc_type
+    if any(re.search(p, text_upper) for p in JUNK_PATTERNS):
+        return "SKIP"
+    return None  # No title → continuation page</code></pre>
+
+<h3>6.3 Phase 3+4: _group_and_filter_pages()</h3>
+<pre><code>def _group_and_filter_pages(
+    pages: List[PageResult]
+) -> Tuple[List[ExtractedDocument], List[SkippedSection]]:
+    """
+    Sequential scan — group pages by document type.
+    Title found → start new group
+    No title → continuation of previous group
+    Junk title → skip, break continuation chain
+    """
+    documents = []
+    skipped = []
+    current_group = None
+
+    for page in pages:
+        title = _detect_page_title(page.first_lines)
+
+        if title and title != "SKIP":
+            # Flush previous group
+            if current_group:
+                documents.append(_merge_group(current_group))
+            current_group = {
+                "type": title,
+                "pages": [page],
+                "start": page.page_number
+            }
+
+        elif title == "SKIP":
+            # Flush and break chain
+            if current_group:
+                documents.append(_merge_group(current_group))
+                current_group = None
+            skipped.append(SkippedSection(
+                page_range=str(page.page_number),
+                reason="Unnecessary document detected"
+            ))
+
+        else:  # None — continuation
+            if current_group:
+                current_group["pages"].append(page)
+            else:
+                skipped.append(SkippedSection(
+                    page_range=str(page.page_number),
+                    reason="No document title found"
+                ))
+
+    # Flush final group
+    if current_group:
+        documents.append(_merge_group(current_group))
+
+    return documents, skipped
+
+
+def _merge_group(group: dict) -> ExtractedDocument:
+    """Merge consecutive pages in a group into one document."""
+    combined_text = "\n".join(p.text for p in group["pages"])
+    end_page = group["pages"][-1].page_number
+    return ExtractedDocument(
+        document_type=group["type"],
+        page_range=f"{group['start']}-{end_page}" if end_page != group["start"] else str(group["start"]),
+        text=combined_text
+    )</code></pre>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 7: API RESPONSE FORMAT                                 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2 id="s7">7. API Response Format</h2>
+
+<h3>7.1 Endpoint</h3>
+<table>
+    <tr><th>Method</th><th>Path</th><th>Port</th><th>Content Type</th></tr>
+    <tr><td><code>POST</code></td><td><code>/extract-text</code></td><td>30498</td><td><code>application/json</code></td></tr>
+</table>
+
+<p><strong>Input:</strong> Multipart file upload (PDF, Image, or Word document)</p>
+
+<h3>7.2 Sample Response</h3>
+<pre><code>{
+  "total_pages": 30,
+  "relevant_pages": 18,
+  "skipped_pages": 12,
+  "documents": [
+    {
+      "document_type": "Bill of Lading (BOL)",
+      "page_range": "1-3",
+      "text": "BILL OF LADING\nShipper: ABC Trading Co Ltd\nConsignee: XYZ Imports...\n..."
+    },
+    {
+      "document_type": "Invoice",
+      "page_range": "4-6",
+      "text": "COMMERCIAL INVOICE\nInvoice No: INV-2026-001\nDate: 2026-04-01...\n..."
+    },
+    {
+      "document_type": "Packing List",
+      "page_range": "7-8",
+      "text": "PACKING LIST\nTotal Packages: 50\nGross Weight: 12,500 KGS...\n..."
+    }
+  ],
+  "skipped_documents": [
+    {"page_range": "9-12", "reason": "No document title found"},
+    {"page_range": "15", "reason": "Unnecessary document detected"},
+    {"page_range": "20-24", "reason": "No document title found"}
+  ]
+}</code></pre>
+
+<div class="callout callout-info">
+    <strong>📋 Downstream Usage</strong>
+    Users copy the <code>text</code> field from each document entry and paste it into Agent 2 (<code>/classify-text</code>) and Agent 3 (<code>/extract-data</code>). The pipeline remains human-in-the-loop — Agent 1 simply provides cleaner, pre-segmented text.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 8: LIMITS & PERFORMANCE                                -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2 id="s8" class="page-break">8. Document AI Limits & Performance</h2>
+
+<h3>8.1 Hard Limits</h3>
+<table>
+    <tr><th>Constraint</th><th>Online (Sync) Mode</th><th>Batch (Async) Mode</th></tr>
+    <tr class="highlight-row"><td><strong>Max file size per request</strong></td><td><strong>20 MB</strong></td><td>500 MB (via GCS)</td></tr>
+    <tr class="highlight-row"><td><strong>Max pages per request</strong></td><td><strong>15 pages</strong></td><td>2,000 pages</td></tr>
+    <tr><td>Supported file types</td><td colspan="2">PDF, JPEG, PNG, TIFF, BMP, WebP, GIF, HTML, DOCX</td></tr>
+    <tr><td>Minimum scan resolution</td><td colspan="2">200 DPI minimum (300+ DPI recommended)</td></tr>
+</table>
+
+<h3>8.2 Quotas (Per Project, Per Minute)</h3>
+<table>
+    <tr><th>Quota</th><th>Default Limit</th><th>Can Increase?</th></tr>
+    <tr><td>Online requests/min (US region)</td><td>120 RPM</td><td>Yes — via GCP Console</td></tr>
+    <tr><td>Online pages/min (US region)</td><td>120 pages/min</td><td>Yes — via GCP Console</td></tr>
+    <tr><td>Best-effort overflow pages/min</td><td>120 pages/min</td><td>Yes — via GCP Console</td></tr>
+</table>
+
+<h3>8.3 Pricing</h3>
+<table>
+    <tr><th>Tier</th><th>Price</th></tr>
+    <tr><td>Free tier</td><td>First <strong>1,000 pages/month</strong> — FREE</td></tr>
+    <tr><td>After free tier</td><td><strong>$1.50 per 1,000 pages</strong> ($0.0015/page)</td></tr>
+</table>
+
+<div class="callout callout-success">
+    <strong>💰 Cost Projection</strong>
+    50 shipments/month × 30 pages = 1,500 pages. First 1,000 = FREE. Next 500 = <strong>$0.75/month</strong>. Annual cost: <strong>~$9/year</strong>.
+</div>
+
+<h3>8.4 Processing Speed by PDF Size</h3>
+<table>
+    <tr>
+        <th>Category</th>
+        <th>Pages</th>
+        <th>File Size</th>
+        <th>Chunks</th>
+        <th>API Calls</th>
+        <th>Est. Time</th>
+        <th>Status</th>
+    </tr>
+    <tr>
+        <td>Small</td>
+        <td>1–5</td>
+        <td>0.1–2 MB</td>
+        <td>1</td>
+        <td>1</td>
+        <td><strong>0.5–1.5s</strong></td>
+        <td><span class="badge badge-green">⚡ Instant</span></td>
+    </tr>
+    <tr>
+        <td>Medium</td>
+        <td>6–15</td>
+        <td>2–5 MB</td>
+        <td>2–3</td>
+        <td>2–3</td>
+        <td><strong>1–3s</strong></td>
+        <td><span class="badge badge-green">✅ Fast</span></td>
+    </tr>
+    <tr>
+        <td>Large</td>
+        <td>16–50</td>
+        <td>5–15 MB</td>
+        <td>4–10</td>
+        <td>4–10</td>
+        <td><strong>2–6s</strong></td>
+        <td><span class="badge badge-blue">✅ Good</span></td>
+    </tr>
+    <tr>
+        <td>Very Large</td>
+        <td>51–100</td>
+        <td>15–20 MB</td>
+        <td>11–20</td>
+        <td>11–20</td>
+        <td><strong>5–12s</strong></td>
+        <td><span class="badge badge-yellow">⚠️ Throttled</span></td>
+    </tr>
+    <tr>
+        <td>Oversized</td>
+        <td>100+</td>
+        <td>20+ MB</td>
+        <td>—</td>
+        <td>—</td>
+        <td>—</td>
+        <td><span class="badge badge-red">🚫 Exceeds sync limit</span></td>
+    </tr>
+</table>
+
+<h3>8.5 Speed Breakdown Per Phase (30-page PDF)</h3>
+<table>
+    <tr><th>Phase</th><th>Operation</th><th>Time</th><th>Bottleneck</th></tr>
+    <tr><td>1a</td><td>PDF splitting (pypdf)</td><td>~50ms</td><td>CPU (negligible)</td></tr>
+    <tr><td>1b</td><td>Document AI OCR (6 chunks × 3 parallel)</td><td>~2–4s</td><td><strong>Network + GCP</strong></td></tr>
+    <tr><td>2</td><td>Per-page text extraction from response</td><td>~5ms</td><td>CPU (negligible)</td></tr>
+    <tr><td>3</td><td>Title regex scan + grouping</td><td>~2ms</td><td>CPU (negligible)</td></tr>
+    <tr><td>4</td><td>Merge & serialize JSON</td><td>~1ms</td><td>CPU (negligible)</td></tr>
+    <tr class="highlight-row"><td colspan="2"><strong>TOTAL</strong></td><td><strong>~2.5–4.5s</strong></td><td></td></tr>
+</table>
+
+<div class="callout callout-info">
+    <strong>📊 Key Takeaway</strong>
+    99% of processing time is Phase 1 (network-bound OCR). Phases 2–4 combined add <strong>less than 10 milliseconds</strong>. The intelligent filtering is essentially free.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 9: RISKS                                               -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2 id="s9" class="page-break">9. Risk Assessment & Mitigation</h2>
+
+<table>
+    <tr><th>#</th><th>Risk</th><th>Severity</th><th>Mitigation</th></tr>
+    <tr>
+        <td>1</td>
+        <td><strong>15-page sync limit exceeded</strong></td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+        <td>5-page chunking keeps every request safely under limit. No action needed.</td>
+    </tr>
+    <tr>
+        <td>2</td>
+        <td><strong>20 MB file size exceeded</strong></td>
+        <td><span class="badge badge-red">High</span></td>
+        <td>Chunking splits before sending — each 5-page chunk ≈1-3 MB. For extremely dense scans, auto-reduce to 3-page chunks if any chunk exceeds 18 MB.</td>
+    </tr>
+    <tr>
+        <td>3</td>
+        <td><strong>120 pages/min quota exhausted</strong></td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+        <td>Queue requests with exponential backoff on 429. Request quota increase via GCP Console if traffic grows.</td>
+    </tr>
+    <tr>
+        <td>4</td>
+        <td><strong>Title regex misses unusual format</strong></td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+        <td>Safe default: untitled pages following a relevant page are kept as continuations. No data loss occurs — worst case is including some unnecessary continuation pages.</td>
+    </tr>
+    <tr>
+        <td>5</td>
+        <td><strong>Low-resolution scan produces poor OCR</strong></td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+        <td>Require clients to submit 300+ DPI scans. Cannot be mitigated in software.</td>
+    </tr>
+    <tr>
+        <td>6</td>
+        <td><strong>GCP 503 Service Unavailable</strong></td>
+        <td><span class="badge badge-blue">Low</span></td>
+        <td>Retry with exponential backoff (2, 4, 8 seconds). Max 3 retries per chunk.</td>
+    </tr>
+    <tr>
+        <td>7</td>
+        <td><strong>Document AI completely unavailable</strong></td>
+        <td><span class="badge badge-blue">Low</span></td>
+        <td>Return HTTP 503 with clear error message. No Gemini fallback — this is intentional to protect Agents 2–5 quota.</td>
+    </tr>
+</table>
+
+<h3>Quota Exhaustion Scenarios</h3>
+<table>
+    <tr><th>Scenario</th><th>Pages/Hour</th><th>Risk Level</th></tr>
+    <tr><td>Normal: 5 shipments/hr × 20 pages</td><td>100</td><td><span class="badge badge-green">Safe</span></td></tr>
+    <tr><td>Busy: 15 shipments/hr × 30 pages</td><td>450</td><td><span class="badge badge-green">Safe</span></td></tr>
+    <tr><td>Peak: 30 shipments/hr × 50 pages</td><td>1,500</td><td><span class="badge badge-yellow">Throttled</span></td></tr>
+    <tr><td>Burst: 5 concurrent 100-page PDFs</td><td>500 in 1 min</td><td><span class="badge badge-red">429 Errors</span></td></tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 10: FILE CHANGES                                       -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2 id="s10">10. File Change List</h2>
+
+<table>
+    <tr><th>Action</th><th>File</th><th>Changes</th></tr>
+    <tr>
+        <td><span class="badge badge-yellow">MODIFY</span></td>
+        <td><code>services/document_processor.py</code></td>
+        <td>
+            • Add <code>_extract_per_page_text()</code> — Phase 1+2<br>
+            • Add <code>_detect_page_title()</code> — Phase 3<br>
+            • Add <code>_group_and_filter_pages()</code> — Phase 3+4<br>
+            • Add <code>_get_page_text()</code> — textAnchor helper<br>
+            • Add <code>_merge_group()</code> — merge helper<br>
+            • Update <code>extract_text_from_file()</code> to use new pipeline<br>
+            • Remove Gemini fallback OCR code<br>
+            • Update chunk size from 3 → 5 pages
+        </td>
+    </tr>
+    <tr>
+        <td><span class="badge badge-yellow">MODIFY</span></td>
+        <td><code>agent1_ocr_extractor/routes.py</code></td>
+        <td>
+            • Change response type to <code>application/json</code><br>
+            • Use <code>SmartExtractionResponse</code> model<br>
+            • Add error handling for DocAI-only mode
+        </td>
+    </tr>
+    <tr>
+        <td><span class="badge badge-yellow">MODIFY</span></td>
+        <td><code>models/schemas.py</code></td>
+        <td>
+            • Add <code>ExtractedDocument</code> model<br>
+            • Add <code>SkippedSection</code> model<br>
+            • Add <code>SmartExtractionResponse</code> model
+        </td>
+    </tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SECTION 11: VERIFICATION                                       -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<h2 id="s11">11. Verification Plan</h2>
+
+<h3>11.1 Unit Tests</h3>
+<ol>
+    <li>Test <code>_detect_page_title()</code> with 20+ sample first-line variations per document type</li>
+    <li>Test <code>_group_and_filter_pages()</code> with simulated scenarios:
+        <ul>
+            <li>BOL (3 pages) → Junk (2 pages) → Invoice (2 pages) → Unknown (4 pages) → PL (1 page)</li>
+            <li>Single-page PDF with no title</li>
+            <li>All pages are junk</li>
+            <li>All pages are necessary documents</li>
+        </ul>
+    </li>
+    <li>Test edge cases: empty text, non-English characters, multiline titles</li>
+</ol>
+
+<h3>11.2 Integration Tests</h3>
+<ol>
+    <li>Start the system: <code>python run.py</code></li>
+    <li>Open Agent 1 Swagger UI: <code>http://localhost:30498/docs</code></li>
+    <li>Upload a mixed PDF (BOL + Invoice + random pages)</li>
+    <li>Verify JSON response has correct document grouping and page ranges</li>
+    <li>Copy <code>text</code> field from response → paste into Agent 2's <code>/classify-text</code> → confirm classification works</li>
+    <li>Test with: single-page PDF, image file (JPEG/PNG), .docx file, 50+ page PDF</li>
+</ol>
+
+<hr>
+
+<div style="text-align:center;padding:24px;color:var(--text-muted);font-size:12px;">
+    <p><strong>CustomsFlow — Agent 1 OCR Extractor Implementation Plan v2.0</strong></p>
+    <p>Prepared by AI Engineering Assistant · April 2026</p>
+    <p>This document is confidential and intended for internal development use only.</p>
+</div>
+
+</body>
+</html>

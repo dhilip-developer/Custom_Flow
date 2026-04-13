@@ -1,0 +1,32 @@
+# ──────────────────────────────────────────────────────────────
+# CustomsFlow Microservices — Python Dependencies
+# ──────────────────────────────────────────────────────────────
+
+# Web Framework & Server
+fastapi
+uvicorn[standard]
+
+# Data Validation (used by FastAPI)
+pydantic
+
+# CORS & Static Files (bundled with FastAPI/Starlette)
+# starlette is installed as a FastAPI dependency
+
+# Templating (insurance_gateway_ui)
+jinja2
+
+# Google Gemini AI SDK (Agents 1-5: OCR, Classification, Extraction, Freight, Cross-Verify)
+google-genai
+
+# OpenAI SDK (Insurance Agents: detector & BOL extractor)
+openai
+
+# Document Parsing
+python-docx          # Word document text extraction (Agent 1)
+PyPDF2               # PDF text extraction (Insurance PDF extractor)
+
+# Environment variable loading
+python-dotenv
+
+# File upload support for FastAPI
+python-multipart
