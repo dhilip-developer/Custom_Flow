@@ -80,8 +80,14 @@ def load_credentials():
                     pass
 
             # Update Email Config from secrets
-            EMAIL_ACCOUNTS["Gmail"]["password"] = secrets.get("GMAIL_APP_PASSWORD", "fayassgomtcfbxxr")
-            EMAIL_ACCOUNTS["Zoho"]["password"] = secrets.get("ZOHO_APP_PASSWORD", "Atert@2026")
+            EMAIL_ACCOUNTS["Gmail"]["password"] = secrets.get("GMAIL_APP_PASSWORD")
+            EMAIL_ACCOUNTS["Zoho"]["password"] = secrets.get("ZOHO_APP_PASSWORD")
+
+            # Warning if missing
+            if not EMAIL_ACCOUNTS["Gmail"]["password"]:
+                print("WARNING: GMAIL_APP_PASSWORD not found in secrets.json or Environment.")
+            if not EMAIL_ACCOUNTS["Zoho"]["password"]:
+                print("WARNING: ZOHO_APP_PASSWORD not found in secrets.json or Environment.")
 
         except json.JSONDecodeError:
             print(f"ERROR: Configuration file {secrets_path} contains invalid JSON.")

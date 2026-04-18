@@ -61,10 +61,10 @@ def start_agents():
         while True:
             time.sleep(1)
             # Optional: Check if any process has exited prematurely
-            for name, p in processes:
-                if p.poll() is not None:
-                    print(f"  [!] WARNING: {name} has stopped (PID: {p.pid})")
-                    processes.remove((name, p))
+            dead = [(name, p) for name, p in processes if p.poll() is not None]
+            for name, p in dead:
+                print(f"  [!] WARNING: {name} has stopped (PID: {p.pid})")
+                processes.remove((name, p))
     except KeyboardInterrupt:
         print("\nGracefully stopping all microservices...")
         for name, p in processes:

@@ -34,7 +34,6 @@ class Invoice(BaseModel):
 
 class PackingList(BaseModel):
     packing_list_number: str = ""
-    total_packages: int = 0
     total_gross_weight: float = 0.0
     total_net_weight: float = 0.0
     weight_unit: str = "KG"
@@ -86,7 +85,6 @@ class ExpertInvoice(BaseModel):
 class ExpertPackingList(BaseModel):
     total_quantity: Optional[float] = None
     unit_of_measure: str = ""
-    number_of_packages: Optional[int] = None
 
 
 class ExpertBillOfLading(BaseModel):

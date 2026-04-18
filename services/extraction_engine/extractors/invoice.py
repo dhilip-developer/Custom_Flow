@@ -44,7 +44,8 @@ class InvoiceExtractor(BaseExtractor):
             or self.search_value(text, [
                 r"Invoice\s*No\.?\s*[:：]\s*(.+?)(?:\s{2,}|\n|$)",
                 r"Inv\.?\s*(?:No\.?|#)\s*[:：]\s*(.+?)(?:\s{2,}|\n|$)",
-                r"INVOICE\s+NO\s*[:：]\s*(.+?)(?:\s{2,}|\n|$)",
+                r"INVOICE\s+NO\.?\s*[:：]\s*(.+?)(?:\s{2,}|\n|$)",
+                r"INVOICE\s+NUMBER\s*[:：]\s*(.+?)(?:\s{2,}|\n|$)",
             ])
         )
 
@@ -59,18 +60,11 @@ class InvoiceExtractor(BaseExtractor):
         )
         data["invoice_date"] = normalize_date(raw_date) if raw_date else None
 
-        # Shipment Date (separate from Invoice Date)
-        raw_ship_date = column_data.get("shipment date")
-        if raw_ship_date:
-            data["shipment_date"] = normalize_date(raw_ship_date)
+        # Shipper & Consignee
+        data["shipper_name_address"] = self._extract_seller(text)
+        data["consignee_name_address"] = self._extract_buyer(text)
 
-        # Buyer — look for company blocks in the address area
-        data["buyer_name"] = self._extract_buyer(text)
-
-        # Seller — usually the first company name in the header
-        data["seller_name"] = self._extract_seller(text)
-
-        # PO Number
+        # PO Number & Item
         data["po_number"] = (
             column_data.get("p.o.no")
             or self.search_value(text, [
@@ -78,12 +72,9 @@ class InvoiceExtractor(BaseExtractor):
                 r"Purchase\s*Order\s*(?:No\.?|#)?\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
             ])
         )
-
-        # PO Date
-        data["po_date"] = normalize_date(self.search_value(text, [
-            r"P\.?O\.?\s*Date\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
-            r"Purchase\s*Order\s*Date\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
-        ]))
+        data["po_item"] = self.search_value(text, [
+            r"P\.?O\.?\s*Item\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+        ])
 
         # Incoterms
         data["incoterms"] = (
@@ -93,13 +84,8 @@ class InvoiceExtractor(BaseExtractor):
             ])
         )
 
-        # Payment Terms
-        data["payment_terms"] = column_data.get("payment terms")
-
-        # Total Amount — IMPORTANT: must be near "Total" keyword, NOT commodity codes
-        data["total_amount"] = self._extract_total_amount(text)
-
-        # Currency
+        # Amount & Currency
+        data["amount"] = self._extract_total_amount(text)
         data["currency"] = self.find_currency(text)
 
         # GST Number
@@ -109,32 +95,24 @@ class InvoiceExtractor(BaseExtractor):
             r"(\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z\d]{2})",  # GST format
         ])
 
-        # PAN Number
-        data["pan_number"] = self.search_value(text, [
-            r"PAN\s*(?:No\.?|Number|CARD)?\s*[:：]?\s*([A-Z]{5}\d{4}[A-Z])",
-        ])
-
-        # Place of Supply / Delivery
-        data["place_of_supply"] = self.search_value(text, [
-            r"Place\s*of\s*Supply\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
-        ])
-        data["place_of_delivery"] = self.search_value(text, [
-            r"Place\s*of\s*Delivery\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
-            r"Delivery\s*(?:Location|Place|At)\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
-        ])
-
-        # HSN / Commodity Code
-        hsn_codes = self._extract_hsn_codes(text)
-        if hsn_codes:
-            data["hsn_codes"] = hsn_codes
-
-        # Line items
+        # Product Info (Primary item if multiple exist)
         items = self._extract_items_from_ocr(text)
         if items:
-            data["items"] = items
+            first_item = items[0]
+            data["part_no"] = first_item.get("part_no") or first_item.get("code")
+            data["description"] = first_item.get("name") or first_item.get("description")
+            data["qty_units"] = normalize_number(first_item.get("quantity"))
+            data["unit_price"] = normalize_number(first_item.get("unit_price"))
+            data["net_value"] = normalize_number(first_item.get("total_price"))
+            data["gross_value"] = data["net_value"] # Heuristic
 
-        # Shipment Number
-        data["shipment_number"] = column_data.get("shipment no")
+        # Country of Origin
+        data["country_of_origin"] = self.search_value(text, [
+            r"Country\s*of\s*Origin\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+        ])
+
+        # HSN Codes
+        data["hsn_codes"] = self._extract_hsn_codes(text)
 
         return prune_empty_fields(data)
 

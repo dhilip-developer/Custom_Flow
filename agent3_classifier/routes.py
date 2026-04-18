@@ -24,10 +24,10 @@ async def verify_data(request: VerificationRequest):
     Submit the extracted JSON data from Agent 2 to verify if it supports the document type.
     Checks for mandatory values and valid document patterns.
     """
-    if not request.extracted_data:
-        raise HTTPException(status_code=400, detail="No extracted data provided for verification.")
+    if not request.structured_data:
+        raise HTTPException(status_code=400, detail="No structured data provided for verification.")
         
-    verification = await verify_extracted_data_async(request.document_type, request.extracted_data)
+    verification = await verify_extracted_data_async(request.document_type, request.structured_data)
     
     return verification
 
@@ -40,7 +40,7 @@ async def verify_batch(request: BatchVerificationRequest):
     if not request.documents:
         return BatchVerificationResponse(total_verified=0, results=[])
         
-    tasks = [verify_extracted_data_async(doc.document_type, doc.extracted_data) for doc in request.documents]
+    tasks = [verify_extracted_data_async(doc.document_type, doc.structured_data) for doc in request.documents]
     results = await asyncio.gather(*tasks)
     
     verified_count = sum(1 for r in results if r.status == "VERIFIED")

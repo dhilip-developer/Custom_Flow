@@ -14,24 +14,24 @@ class PackingListExtractor(BaseExtractor):
     def extract_fields(self, text: str) -> Dict[str, Any]:
         data: Dict[str, Any] = {}
 
-        data["pl_number"] = self.search_value(text, [
-            r"Packing\s*List\s*(?:No\.?|Number|#)\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
-            r"PL\s*(?:No\.?|#)\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
-            r"(?:Doc(?:ument)?|Ref(?:erence)?)\s*(?:No\.?|#)\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+        data["invoice_number"] = self.search_value(text, [
+            r"Invoice\s*(?:No\.?|Number|#)\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+            r"Inv\.?\s*(?:No\.?|#)\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
         ])
 
-        data["pl_date"] = normalize_date(self.search_value(text, [
-            r"(?:Packing\s*List\s*)?Date\s*[:：]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
-            r"Date\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+        data["invoice_date"] = normalize_date(self.search_value(text, [
+            r"Invoice\s*Date\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+            r"Inv\.?\s*Date\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+            r"Date\s*of\s*Invoice\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
         ]))
 
-        # Total packages
-        pkg_raw = self.search_value(text, [
-            r"Total\s*(?:Packages?|Pkgs?|No\.?\s*of\s*Packages?)\s*[:：]?\s*(\d+)",
-            r"(\d+)\s*(?:Packages?|Pkgs?|Pallets?|Cartons?|Drums?|Cases?)\s*(?:Total|in\s*Total)",
-            r"(?:No\.?\s*of\s*)?(?:Packages?|Pkgs?)\s*[:：]?\s*(\d+)",
+        data["shipper"] = self.search_block(text, r"Shipper", max_lines=3)
+        data["consignee"] = self.search_block(text, r"Consignee", max_lines=3)
+
+        data["po_number"] = self.search_value(text, [
+            r"P\.?O\.?\s*(?:No\.?|Number|#)\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+            r"Purchase\s*Order\s*(?:No\.?|#)?\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
         ])
-        data["total_packages"] = int(pkg_raw) if pkg_raw and pkg_raw.isdigit() else normalize_number(pkg_raw) if pkg_raw else None
 
         # Weights
         gross_raw = self.search_value(text, [
@@ -53,11 +53,6 @@ class PackingListExtractor(BaseExtractor):
             or self.search_block(text, r"Marks?\s*(?:and|&)?\s*Numbers?", max_lines=4)
         )
 
-        # Dimensions / CBM
-        data["total_cbm"] = self.search_value(text, [
-            r"(?:Total\s*)?(?:CBM|Measurement)\s*[:：]?\s*([0-9][0-9,.]*)",
-        ])
-
         # Pallet details
         data["pallet_details"] = self.search_block(
             text, r"Pallet", max_lines=3
@@ -66,6 +61,15 @@ class PackingListExtractor(BaseExtractor):
         # Product line items
         items = extract_line_items(text)
         if items:
-            data["product_details"] = items
+            first_item = items[0]
+            data["qty"] = normalize_number(first_item.get("quantity"))
+            data["part_number"] = first_item.get("part_no") or first_item.get("code")
+            data["hs_code"] = first_item.get("hsn_code")
+            data["description"] = first_item.get("name") or first_item.get("description")
+
+        # Country of Origin
+        data["country_of_origin"] = self.search_value(text, [
+            r"Country\s*of\s*Origin\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+        ])
 
         return prune_empty_fields(data)

@@ -151,10 +151,14 @@ class BatchDataExtractionRequest(BaseModel):
 class SuperExtractionResult(BaseModel):
     document_type: str = Field(..., description="The classified type of this document segment")
     structured_data: Dict[str, Any] = Field(..., description="The extracted data fields based on the type")
+    items: List[Dict[str, Any]] = Field(default_factory=list, description="Extracted line items from the document table")
 
 
 class SuperExtractionResponse(BaseModel):
     documents: List[SuperExtractionResult] = Field(..., description="List of all logical documents found in the text")
+    extraction_mode: str = Field("gemini", description="Overall extraction mode: gemini or regex_fallback")
+    llm_failed: bool = Field(False, description="True if the primary LLM engine failed")
+    error: Optional[str] = Field(None, description="Detailed error message if extraction failed")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -168,7 +172,7 @@ class SuperExtractionResponse(BaseModel):
 
 class VerificationRequest(BaseModel):
     document_type: str = Field(..., description="The type from Agent 2")
-    extracted_data: Dict[str, Any] = Field(..., description="The structured fields from Agent 2")
+    structured_data: Dict[str, Any] = Field(..., description="The structured fields from Agent 2")
 
 class VerificationResponse(BaseModel):
     status: str = Field(..., description="VERIFIED | FAILED | PARTIAL")
@@ -176,6 +180,7 @@ class VerificationResponse(BaseModel):
     document_name: str = Field(..., description="Verified name of the document")
     details: str = Field(..., description="Explanation of verification results")
     fields_verified: int = Field(..., description="Number of mandatory fields found and verified")
+    missing_fields: List[str] = Field(default_factory=list, description="List of names of missing required fields")
 
 
 class BatchVerificationRequest(BaseModel):
@@ -206,7 +211,6 @@ class GlobalValidationResult(BaseModel):
 
 class CustomsIntelligenceResponse(BaseModel):
     documents: List[CustomsIntelligenceResult]
-    global_validation: GlobalValidationResult
 
 class CustomsAuditRequest(BaseModel):
     documents: List[Dict[str, Any]] = Field(..., description="List of documents from Agent 2 with document_type and structured_data")

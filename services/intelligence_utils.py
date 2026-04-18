@@ -17,8 +17,8 @@ from models.schemas import (
 
 def robust_json_unwrap(text: str) -> str:
     """
-    Extracts the first valid JSON object from a string using regex.
-    Handles conversational noise, markdown backticks, and trailing garbage.
+    Extracts the largest valid JSON block from a string.
+    (Step 4: JSON Hardening).
     """
     if not text: return "{}"
     clean = text.strip()
@@ -26,11 +26,32 @@ def robust_json_unwrap(text: str) -> str:
     clean = re.sub(r"```json\s*", "", clean, flags=re.IGNORECASE)
     clean = re.sub(r"```\s*", "", clean, flags=re.IGNORECASE)
     
-    # Target the outermost { ... }
-    match = re.search(r"(\{.*\})", clean, re.DOTALL)
+    # Priority: Greedy match for outermost { ... } to handle conversational prefixes
+    match = re.search(r"(\{[\s\S]*\})", clean)
     if match:
         return match.group(1)
     return clean
+
+def sanitize_json(text: str) -> str:
+    """
+    Fix common LLM JSON malformations before json.loads().
+    (Step 4: JSON Hardening - Fix missing commas).
+    """
+    if not text: return text
+    
+    # 1. Fix missing commas between key-value pairs
+    # Pattern: "key": "value" "next_key":
+    text = re.sub(r'("[\w_]+":\s*(?:"[^"]*"|\d+(?:\.\d+)?|true|false|null))\s*("[\w_]+":)', r'\1,\2', text)
+    
+    # 2. Fix missing commas between elements in a list
+    # Pattern: } { or ] [
+    text = re.sub(r'\}\s*\{', '},{', text)
+    text = re.sub(r'\]\s*\[', '],[', text)
+    
+    # 3. Remove trailing commas before } or ]
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+    
+    return text
 
 # Initialize API Clients
 def get_secrets():
@@ -42,109 +63,48 @@ def get_secrets():
 
 secrets = get_secrets()
 
-# Configure Gemini (New SDK)
-gemini_client = genai.Client(api_key=secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY")))
-GEMINI_MODEL_NAME = "gemini-3-flash-preview" 
-
-# OpenRouter Client
-client_or = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=secrets.get("OPENROUTER_API_KEY", os.getenv("OPENROUTER_API_KEY"))
-)
-
-# Grok (xAI) Client
-client_grok = OpenAI(
-    base_url="https://api.x.ai/v1",
-    api_key=secrets.get("GROK_API_KEY", os.getenv("GROK_API_KEY"))
-)
-
-# Hugging Face Client (Secondary)
-client_hf = InferenceClient(
-    token=secrets.get("HUGGINGFACE_API_KEY", os.getenv("HUGGINGFACE_API_KEY"))
+# Configure OpenAI (ChatGPT) 
+openai_client = OpenAI(
+    api_key=secrets.get("OPENAI_API_KEY", "")
 )
 
 async def generate_llm_content(prompt: str, system_prompt: str = None, model: str = None) -> str:
     """
-    Utility wrapper for LLM Inference with high-fidelity document awareness.
-    Priority: Direct Gemini -> OpenRouter -> Grok -> HF Hub
+    Utility wrapper for LLM Inference using OpenAI ChatGPT.
     """
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    errors = []
-
-    # --- PHASE 0: Direct Gemini (Highest Precision, Priority) ---
     max_retries = 3
+    last_error = None
+    
     for attempt in range(max_retries):
         try:
-            print(f"[Intelligence] Attempting Direct Gemini (Attempt {attempt+1}/{max_retries})")
-            # Use the already initialized gemini_client (genai.Client)
-            contents = []
-            if system_prompt: contents.append(system_prompt)
-            contents.append(prompt)
-            
+            print(f"[Intelligence] Attempting OpenAI ChatGPT (gpt-4o-mini) - Attempt {attempt+1}/{max_retries}")
             response = await asyncio.to_thread(
-                gemini_client.models.generate_content,
-                model=GEMINI_MODEL_NAME, 
-                contents=contents
+                openai_client.chat.completions.create,
+                model="gpt-4o-mini",
+                messages=messages,
+                max_tokens=4096,
+                temperature=0.0
             )
-            if response and response.text:
-                return response.text
+            if response and response.choices:
+                return response.choices[0].message.content
+            return "{}"
         except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                wait = (attempt + 1) * 5
-                print(f"[Intelligence] Gemini Quota Hit. Throttling {wait}s...")
-                await asyncio.sleep(wait)
+            last_error = str(e)
+            print(f"[Intelligence] OpenAI ChatGPT Error: {e}")
+            if "429" in last_error or "503" in last_error:
+                wait_time = 2 ** attempt
+                print(f"[Intelligence] Rate limited. Waiting {wait_time}s...")
+                await asyncio.sleep(wait_time)
             else:
-                print(f"[Intelligence] Gemini direct failed: {e}")
-                errors.append(f"Gemini: {str(e)}")
-                break # Non-quota error, move to fallback
-
-    # --- PHASE 1: Try OpenRouter (Failover) ---
-    or_models = [
-        "google/gemma-2-9b-it:free", # FREE - High availability
-        "meta-llama/llama-3.1-8b-instruct:free", # FREE - Backup
-        "microsoft/phi-3-mini-128k-instruct:free" # FREE - Ultralight
-    ]
-    for target_model in or_models:
-        try:
-            print(f"[Intelligence] Fallback: OpenRouter with {target_model}")
-            response = await asyncio.to_thread(
-                client_or.chat.completions.create,
-                model=target_model,
-                messages=messages,
-                max_tokens=800, # Conservative token window
-                temperature=0.1
-            )
-            if response and response.choices[0].message.content:
-                return response.choices[0].message.content
-        except Exception as e:
-            print(f"[Intelligence] OpenRouter {target_model} failed: {e}")
-            errors.append(f"OpenRouter({target_model}): {str(e)}")
-
-    # --- PHASE 2: Try HF Hub (Last Resort) ---
-    hf_models = [
-        "HuggingFaceH4/zephyr-7b-beta",
-        "mistralai/Mistral-7B-Instruct-v0.2"
-    ]
-    for target_model in hf_models:
-        try:
-            print(f"[Intelligence] Last Resort: HF Hub with {target_model}")
-            response = await asyncio.to_thread(
-                client_hf.chat_completion,
-                messages=messages,
-                model=target_model,
-                max_tokens=800
-            )
-            if response and response.choices[0].message.content:
-                return response.choices[0].message.content
-        except Exception as e:
-            print(f"[Intelligence] HF Hub {target_model} failed: {e}")
-            errors.append(f"HF({target_model}): {str(e)}")
-
-    return '{"documents": []}' # Prevent crash on total failure
+                break
+                
+    print(f"[Intelligence] CRITICAL: OpenAI ChatGPT failed after retries: {last_error}")
+    raise Exception(f"OpenAI ChatGPT FAILED: {last_error}")
 
 
 def generate_gemini_content_with_retry(client, model, contents, config, max_retries=5):
@@ -324,6 +284,8 @@ async def clean_and_structure_text(type_hint: str, content: str) -> CleanedDocum
         )
 
 
+
+
 async def extract_data_from_text_async(document_type: str, text: str) -> dict:
     """Async version of Agent 2 extraction for parallel processing."""
     system_prompt = f"""
@@ -362,12 +324,15 @@ async def extract_data_from_text_async(document_type: str, text: str) -> dict:
 
     try:
         content = await generate_llm_content(f"DOCUMENT RAW TEXT PAYLOAD:\n{text}", system_prompt)
-        result_json = json.loads(content)
+        # Sanitize LLM response before parsing
+        clean_content = robust_json_unwrap(content)
+        clean_content = sanitize_json(clean_content)
+        result_json = json.loads(clean_content)
         return result_json
 
     except Exception as e:
-        print(f"Error extracting data (async): {e}")
-        return {"Agent 3 Error": f"Failed to extract logic: {str(e)}"}
+        print(f"[Agent 2] Error extracting data (async): {e}")
+        return {"Agent 2 Error": f"Failed to extract logic: {str(e)}"}
 
 
 def extract_data_from_text(document_type: str, text: str) -> dict:
@@ -482,55 +447,29 @@ def split_text_into_logical_chunks(text: str, chunk_size: int = 8000, overlap: i
 def merge_extractions(documents: List[SuperExtractionResult]) -> List[SuperExtractionResult]:
     """
     Intelligently merges partial extractions with fuzzy deduplication for items.
+    Handles orphan docs (no identifier) by attaching them to same-type docs.
     """
     if not documents: return []
-    merged_map = {} 
     
-    for doc in documents:
-        data = doc.structured_data
-        dtype = doc.document_type.lower()
-        doc_id = str(data.get("invoice_number") or data.get("bl_number") or 
-                     data.get("hss_ref_no") or data.get("pl_number") or "").strip().upper()
-        
-        key = (dtype, doc_id)
-        if key not in merged_map:
-            merged_map[key] = doc
-            continue
-            
-        base = merged_map[key].structured_data
-        for field, value in data.items():
-            if value and not base.get(field):
-                base[field] = value
-            elif field == "items" and isinstance(value, list):
-                # FUZZY DEDUPLICATION FOR ITEMS
-                base_items = base.get("items", [])
-                for new_item in value:
-                    is_duplicate = False
-                    for b_item in base_items:
-                        # Check Quantity + Fuzzy Name
-                        if (str(new_item.get("quantity")) == str(b_item.get("quantity")) and 
-                            fuzzy_name_match(new_item.get("name"), b_item.get("name"))):
-                            is_duplicate = True
-                            # Keep the longer name (usually has more detail)
-                            if len(str(new_item.get("name"))) > len(str(b_item.get("name"))):
-                                b_item["name"] = new_item["name"]
-                            break
-                    if not is_duplicate:
-                        base_items.append(new_item)
-                base["items"] = base_items
+    merged_map = {}
+    last_id_for_type = {}
+    orphans = []
+    
     for doc in documents:
         data = doc.structured_data
         dtype = doc.document_type.lower()
         
         # CLEANUP: Remove any internal text fields that Gemini might have hallucinated
-        # This prevents the "occupying the entire row" issue in UIs.
         for blacklisted in ["raw_text", "text", "chunk", "payload", "full_text"]:
             data.pop(blacklisted, None)
             
-        doc_id = str(data.get("invoice_number") or data.get("bl_number") or 
-                     data.get("hss_ref_no") or data.get("pl_number") or 
-                     data.get("policy_number") or "").strip().upper()
+        doc_id = str(
+            data.get("invoice_number") or data.get("bl_number") or 
+            data.get("hss_ref_no") or data.get("pl_number") or 
+            data.get("policy_number") or ""
+        ).strip().upper()
         
+        # Inherit ID from previous doc of same type if this one has none
         if not doc_id and dtype in last_id_for_type:
             doc_id = last_id_for_type[dtype]
             
@@ -550,6 +489,7 @@ def merge_extractions(documents: List[SuperExtractionResult]) -> List[SuperExtra
                 if not base.get(field):
                     base[field] = value
                 elif field == "items" and isinstance(value, list):
+                    # FUZZY DEDUPLICATION FOR ITEMS
                     base_items = base.get("items", [])
                     for new_item in value:
                         is_dup = False
@@ -561,11 +501,13 @@ def merge_extractions(documents: List[SuperExtractionResult]) -> List[SuperExtra
                                     b_item["name"] = new_item["name"]
                                 break
                         if not is_dup: base_items.append(new_item)
+                    base["items"] = base_items
                 elif isinstance(value, dict) and isinstance(base.get(field), dict):
                     base[field].update({k: v for k, v in value.items() if v})
                 elif len(str(value)) > len(str(base[field])):
                     base[field] = value
                     
+    # Attach orphan docs to same-type merged docs, or keep as standalone
     final_docs = list(merged_map.values())
     for orphan in orphans:
         matches = [d for d in final_docs if d.document_type.lower() == orphan.document_type.lower()]
@@ -579,106 +521,141 @@ def merge_extractions(documents: List[SuperExtractionResult]) -> List[SuperExtra
             
     return final_docs
 
-async def extract_chunk_with_gemini(chunk: str, system_prompt: str) -> List[Dict[str, Any]]:
-    """Calls the robust LLM provider chain with automatic failover and JSON parsing."""
-    prompt = f"EXTRACT FROM THIS TEXT CHUNK:\n{chunk}"
+async def extract_chunk_with_gemini(raw_text: str, document_type: str = "unknown") -> List[Dict[str, Any]]:
+    """
+    Step 3: Core Extraction Engine (14 Core Rules Alignment).
+    Identifies and extracts structured data from OCR text with strict validation.
+    """
+    system_prompt = """
+    You are an intelligent document understanding system specialized in logistics and customs documents.
+
+    Your task is to convert RAW OCR TEXT into STRICT STRUCTURED JSON.
+
+    ---
+
+    ## 🔹 CRITICAL INSTRUCTIONS
+
+    1. DOCUMENT UNDERSTANDING FIRST (MANDATORY)
+    * Identify the PRIMARY document type:
+      * "invoice"
+      * "packing_list"
+      * "bill_of_lading"
+      * "freight_certificate"
+      * "insurance_certificate"
+      * "unknown"
+
+    ---
+
+    ## 🔹 MANDATORY FIELDS PER DOCUMENT TYPE
+    Extract the following fields STRIYLY for each type:
+
+    ### 1. Invoice
+    - invoice_number, invoice_date
+    - shipper_name_address, consignee_name_address
+    - po_number, po_item, incoterms
+    - amount, currency, gst_number
+    - part_no, description, country_of_origin
+    - qty_units, unit_price, net_value, gross_value
+    - hsn_codes
+
+    ### 2. Bill of Lading (BOL)
+    - bl_number, bl_date
+    - shipper, consignee, forwarder, notify_party
+    - vessel_name, voyage_no, port_of_loading, port_of_destination
+    - container_number, container_type, seal_number
+    - gross_weight, net_weight, package_count
+    - freight_terms, description_of_goods, measurement
+
+    ### 3. Packing List
+    - invoice_number, invoice_date
+    - shipper, consignee, po_number
+    - gross_weight, net_weight
+    - marks_and_numbers, qty, pallet_details
+    - part_number, country_of_origin, hs_code, description
+
+    ### 4. Freight Certificate
+    - bl_number, freight_charges, currency
+    - weight (including c.wt), incoterms, packages
+    - pol, pod, consignee
+    - excharge_charges, container_type, date
+
+    ### 5. Insurance Certificate
+    - policy_number, issue_date, gst_uin_number
+    - invoice_number, invoice_date
+    - address, description, po_number
+    - insured_amount, currency
+    - pod, pol, exchange_rate, description_of_goods
+
+    ---
+
+    ## 🔹 EXTRACTION RULES
+    * Treat entire input as ONE document.
+    * Use semantic understanding, not exact keywords.
+    * Convert amounts/weights to float (remove commas).
+    * Convert dates to YYYY-MM-DD.
+    * If missing -> set to null.
+
+    ---
+
+    ## 🔹 STRICT OUTPUT FORMAT (MANDATORY)
+    Return ONLY ONE JSON object:
+
+    {
+      "document_type": "<DETECTED_TYPE>",
+      "structured_data": {
+        "FIELD_NAME": "VALUE",
+        ...
+      },
+      "items": [],
+      "confidence_score": 95,
+      "missing_fields": []
+    }
+    """
+    prompt = f"EXTRACT FROM THIS RAW OCR TEXT:\n{raw_text}"
+    
     try:
-        # Use the robust provider chain (OpenRouter/Grok/HF)
         raw_response = await generate_llm_content(prompt, system_prompt)
-        
-        # Robustly extract JSON from the LLM conversation
         json_text = robust_json_unwrap(raw_response)
+        json_text = sanitize_json(json_text)
         data = json.loads(json_text)
         
         docs = data.get("documents", [])
-        print(f"[Intelligence] Extracted {len(docs)} docs from chunk ({len(chunk)} chars)")
+        if not docs and isinstance(data, dict) and "structured_data" in data:
+            docs = [data]
+            
+        for d in docs:
+            if "document_type" not in d or d["document_type"] == "unknown":
+                d["document_type"] = document_type
+            
         return docs
     except Exception as e:
-        print(f"[Intelligence] Chunk extraction failed: {str(e)[:100]}")
-        return []
+        print(f"[Intelligence] CRITICAL: LLM Extraction Failed for {document_type}: {e}")
+        return [{
+            "document_type": document_type,
+            "structured_data": {},
+            "items": []
+        }]
 
 async def extract_with_super_agent(text: str) -> SuperExtractionResponse:
     """
-    Advanced Structured Extraction Engine (V1.0 Final).
-    Strictly follows the User-Defined Flowchart-Aligned Protocol.
+    Agent 2: Phase 2 Modular Pipeline Entry Point.
+    Wires the router directly to the Hybrid Extraction Engine.
+    (Fix 1, 3: Force Pipeline and Hybrid Engine usage).
     """
-    start_time = time.time()
+    from services.extraction_engine.hybrid_engine import extract_with_hybrid_engine
     
-    # 1. PRE-PROCESS
-    clean_text = text
-    try:
-        unwrapped = re.sub(r'^\s*\(?\s*(\{.*?\})\s*\)?\s*$', r'\1', text, flags=re.DOTALL)
-        if unwrapped != text:
-            temp_data = json.loads(unwrapped)
-            if "raw_text" in temp_data: clean_text = temp_data["raw_text"]
-    except: pass
-
-    # 2. ADAPTIVE CHUNKING
-    chunks = split_text_into_logical_chunks(clean_text)
-    print(f"[Intelligence] Started Advanced Extraction ({len(clean_text)} chars, {len(chunks)} chunks)")
+    print(f"[Agent 2] Gemini Super Engine Activation ({len(text)} chars)")
     
-    system_prompt = """
-    You are an advanced structured data extraction engine.
-
-    🚨 CRITICAL OBJECTIVE:
-    Extract ALL documents and ALL important fields accurately. 
-    If a value exists in the input text -> it MUST appear in output.
-
-    ---
-    ## STEP 1: DOCUMENT IDENTIFICATION
-    Identify: invoice, bill_of_lading, packing_list, high_seas_sale_agreement, freight_certificate, insurance_certificate, certificate_of_origin.
-
-    ---
-    ## STEP 2: CLASSIFICATION RULES (STRICT)
-    1. IF currency = USD AND BL number exists -> document_type = freight_certificate (NOT invoice)
-    2. IF contains [BL number, vessel, ports] -> bill_of_lading
-    3. IF contains [weights, packages, marks] -> packing_list
-    4. IF contains [agreement reference, buyer/seller transfer] -> high_seas_sale_agreement
-
-    ---
-    ## STEP 3: EXTRACTION RULES
-    - Combine fragmented data into ONE document object per identifier.
-    - If same document appears multiple times → MERGE them.
-    - DO NOT extract irrelevant data (addresses, phone numbers, legal text).
-
-    ---
-    ## STEP 4: REQUIRED FIELDS (MANDATORY IF PRESENT)
-    - INVOICE: invoice_number, invoice_date, buyer_name, seller_name, total_amount, currency, gst_number, po_number, po_date, place_of_supply, place_of_delivery, hsn_codes, items: [{name, quantity, unit_price, total_price, batch, hsn_code}]
-    - BILL OF LADING: bl_number, bl_date, shipper, consignee, vessel_name, voyage_no, port_of_loading, port_of_destination, container_number, seal_number, gross_weight, net_weight, package_count, freight_terms
-    - PACKING LIST: pl_number, pl_date, total_packages, gross_weight, net_weight, marks_and_numbers, product_details, pallet_details
-    - HIGH SEAS SALE AGREEMENT: hss_ref_no, agreement_date, buyer, seller, bl_number, vessel_name, port_of_loading, port_of_destination, foreign_invoice_number, foreign_invoice_date, foreign_invoice_amount, currency, incoterms, buyer_po_number, buyer_po_date
-    - FREIGHT CERTIFICATE: bl_number, vessel_name, total_amount, currency (USD), description_of_goods
-
-    ---
-    ## STEP 5: DATA NORMALIZATION
-    - Numbers: "3,032,800.00" → 3032800 (integer/float only)
-    - Weights: "21,749.200 KG" → 21749.2 (remove units)
+    # Trigger the Modular Hybrid Engine (Segmentation -> Gemini -> Validate -> Merge)
+    result = await extract_with_hybrid_engine(text)
     
-    OUTPUT FORMAT (STRICT JSON):
-    {"documents": [{"document_type": "...", "structured_data": {...}}]}
-    """
-    
-    # 2.5 SEQUENTIAL BATCH EXTRACTION (To avoid provider rate limits)
-    chunk_results = []
-    print(f"[Intelligence] Processing {len(chunks)} chunks sequentially for maximum stability...")
-    for i, chunk in enumerate(chunks, 1):
-        res = await extract_chunk_with_gemini(chunk, system_prompt)
-        chunk_results.append(res)
-        if i % 3 == 0: await asyncio.sleep(1.5) # Compliance Breather for 15 RPM limits
-
-    # 3. NON-DESTRUCTIVE MERGE
-    raw_extracted = []
-    for results in chunk_results:
-        for item in results:
-            raw_extracted.append(SuperExtractionResult(
-                document_type=item.get("document_type", "unknown"),
-                structured_data=item.get("structured_data", {})
-            ))
-            
-    final_docs = merge_extractions(raw_extracted)
-    print(f"[Intelligence] Extraction Complete. {len(final_docs)} unique docs grouped. Time: {time.time()-start_time:.2f}s")
-    
-    return SuperExtractionResponse(documents=final_docs)
+    # Step 9: Return matched to schema including diagnostic flags
+    return SuperExtractionResponse(
+        documents=result["documents"],
+        extraction_mode=result.get("extraction_mode", "gemini"),
+        llm_failed=result.get("llm_failed", False),
+        error=result.get("error")
+    )
 
 
 async def detect_freight_certificate_requirement_async(text: str) -> FreightCertificateCheckResponse:
@@ -750,98 +727,129 @@ def detect_freight_certificate_requirement(text: str) -> FreightCertificateCheck
 async def verify_extracted_data_async(document_type: str, data: Dict[str, Any]) -> VerificationResponse:
     """
     Agent 3: Verifies if the extracted data supports the classified document type.
-    Handles multiple key formats from Agent 2 (Legacy vs SuperAgent).
+    Uses strict deterministic rule-based checking for maximum speed and accuracy.
     """
-    system_prompt = """
-    You are a Senior Customs Document Auditor (Agent 3).
-    TASK: Verify if the structured JSON data provided (from Agent 2) supports the CLAIMED document type.
+    REQUIRED_FIELDS = {
+        "invoice": [
+            "invoice_number", "invoice_date", "shipper_name_address", "consignee_name_address", 
+            "po_number", "amount", "currency", "part_no", "description", "qty_units"
+        ],
+        "bill_of_lading": [
+            "bl_number", "bl_date", "shipper", "consignee", "vessel_name", 
+            "port_of_loading", "port_of_destination", "container_number"
+        ],
+        "packing_list": [
+            "invoice_number", "invoice_date", "shipper", "consignee", 
+            "gross_weight", "net_weight"
+        ],
+        "freight_certificate": [
+            "bl_number", "freight_charges", "currency", "weight", "pol", "pod"
+        ],
+        "insurance_certificate": [
+            "policy_number", "issue_date", "invoice_number", "insured_amount", "currency"
+        ]
+    }
     
-    VERIFICATION RULES:
-    1. KEY MAPPING: 
-       - Recognize Legacy Keys: 'INVOICE NUMBER AND DATE', 'BILL NO.', 'SHIPPER NAME', 'TOTAL VALUE', 'GROSS WEIGHT', etc.
-       - Recognize SuperAgent Keys: 'document_number', 'bl_number', 'invoice_number', 'buyer_name', 'total_amount', etc.
+    # Normalize document type
+    dtype = document_type.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("-", "_")
+    # Fuzzy match
+    if "invoice" in dtype: dtype = "invoice"
+    elif "lading" in dtype or "bol" in dtype: dtype = "bill_of_lading"
+    elif "packing" in dtype: dtype = "packing_list"
+    elif "freight" in dtype: dtype = "freight_certificate"
+    elif "insurance" in dtype: dtype = "insurance_certificate"
+    elif "origin" in dtype: dtype = "certificate_of_origin"
+    elif "high_seas" in dtype or "hss" in dtype or "agreement" in dtype: dtype = "high_seas_sale_agreement"
+
+    required = REQUIRED_FIELDS.get(dtype, [])
     
-    2. INTEGRITY CHECK (Confidence 0-100):
-       - 90-100: Mandatory fields (Numbers + Dates + Entities) are present and valid.
-       - 60-89: Some fields present, but missing primary identifiers (e.g. no Invoice #).
-       - 0-59: Data is sparse, garbage, or belongs to a different document type.
-
-    3. DOCUMENT NAME:
-       - Refine the claim into a professional title (e.g. 'Tax Invoice', 'Ocean Bill of Lading', 'Commercial Packing List').
-
-    4. STATUS:
-       - VERIFIED: High integrity match.
-       - PARTIAL: Matches type but data is incomplete for customs filing.
-       - FAILED: Data clearly contradicts the document type.
-    
-    RETURN JSON ONLY.
-    """
-
-    prompt = f"""
-    AUDIT REQUEST:
-    Claimed Type: {document_type}
-    Input Data: {json.dumps(data, indent=2)}
-    
-    Output JSON format:
-    {{
-      "status": "VERIFIED | FAILED | PARTIAL",
-      "confidence": <float_0_to_100>,
-      "document_name": "<Refined Professional Title>",
-      "details": "<Brief explanation of audit findings>",
-      "fields_verified": <int_count_of_valid_fields>
-    }}
-    """
-
-    try:
-        content = await generate_llm_content(prompt, system_prompt)
-        # Clean potential markdown backticks
-        clean_content = content.strip()
-        if clean_content.startswith("```json"):
-            clean_content = clean_content.replace("```json", "").replace("```", "").strip()
-            
-        result = json.loads(clean_content)
-        return VerificationResponse(**result)
-
-    except Exception as e:
-        print(f"[Intelligence] Error in verification: {e}")
+    if not required:
         return VerificationResponse(
-            status="FAILED",
-            confidence=0.0,
+            status="PARTIAL",
+            confidence=50.0,
             document_name=document_type,
-            details=f"Verification failed due to error: {str(e)}",
-            fields_verified=0
+            details="Unknown document type or no mandatory fields defined for verification.",
+            fields_verified=0,
+            missing_fields=[]
         )
+
+    found_fields = []
+    missing_fields = []
+
+    for field in required:
+        val = data.get(field)
+        if val and str(val).strip() and str(val).lower() != "n/a":
+            found_fields.append(field)
+        else:
+            missing_fields.append(field)
+
+    total_fields = len(required)
+    confidence = (len(found_fields) / total_fields) * 100.0 if total_fields > 0 else 0.0
+
+    status = "VERIFIED" if confidence > 80.0 else "PARTIAL"
+    
+    details = f"Found {len(found_fields)}/{total_fields} mandatory fields."
+    if missing_fields:
+        details += f" Missing critical values."
+        
+    return VerificationResponse(
+        status=status,
+        confidence=round(confidence, 2),
+        document_name=document_type,
+        details=details,
+        fields_verified=len(found_fields),
+        missing_fields=missing_fields
+    )
 def run_rule_based_audit(payload: Dict[str, Any]) -> CustomsIntelligenceResponse:
     """
     Agent 3: High-Precision Deterministic Auditor.
     Implements Field Validation (70%) + Rule Validation (30%).
     """
+    # 1. Configuration - Required Fields per Document Type (User Mandatory List)
     REQUIRED_FIELDS = {
-        "invoice": ["document_number", "document_date", "buyer_name", "seller_name", "total_amount", "currency"],
-        "high_seas_sale_agreement": ["document_number", "document_date", "buyer_name", "seller_name", "bl_number", "bl_date", "vessel_name"],
-        "bill_of_lading": ["bl_number", "bl_date", "shipper", "consignee", "vessel_name", "port_of_loading", "port_of_discharge", "container_number", "gross_weight", "net_weight", "packages"],
-        "certificate_of_origin": ["certificate_number", "exporter_name", "importer_name", "country_of_origin", "description_of_goods"],
-        "packing_list": ["document_number", "document_date", "seller_name", "buyer_name", "gross_weight", "net_weight", "packages"]
+        "invoice": [
+            "invoice_number", "invoice_date", "shipper_name_address", "consignee_name_address", 
+            "po_number", "amount", "currency", "part_no", "description", "qty_units"
+        ],
+        "bill_of_lading": [
+            "bl_number", "bl_date", "shipper", "consignee", "vessel_name", 
+            "port_of_loading", "port_of_destination", "container_number"
+        ],
+        "packing_list": [
+            "invoice_number", "invoice_date", "shipper", "consignee", 
+            "gross_weight", "net_weight"
+        ],
+        "freight_certificate": [
+            "bl_number", "freight_charges", "currency", "weight", "pol", "pod"
+        ],
+        "insurance_certificate": [
+            "policy_number", "issue_date", "invoice_number", "insured_amount", "currency"
+        ]
     }
 
     raw_docs = payload.get("documents", [])
     processed_docs = []
     doc_confidences = []
-    global_critical = []
-    global_warnings = []
     
-    # 1. Collect values for Cross-Document Validation
-    cross_bl_map = {} # doc_type -> value
+    # Cross-verification maps
+    cross_bl_map = {}
     cross_inv_map = {}
     cross_vessel_map = {}
-    
-    present_types = [doc.get("document_type", "").lower() for doc in raw_docs]
-    freight_detected = False
-    insurance_detected = False
 
     # 2. Per-Document Validation
     for doc in raw_docs:
-        dtype = doc.get("document_type", "").lower()
+        dtype_raw = doc.get("document_type", "").lower().replace(" ", "_").replace("(", "").replace(")", "").replace("-", "_")
+        
+        # Fuzzy match
+        dtype = dtype_raw
+        if "invoice" in dtype: dtype = "invoice"
+        elif "lading" in dtype or "bol" in dtype: dtype = "bill_of_lading"
+        elif "packing" in dtype: dtype = "packing_list"
+        elif "freight" in dtype: dtype = "freight_certificate"
+        elif "insurance" in dtype: dtype = "insurance_certificate"
+        elif "origin" in dtype: dtype = "certificate_of_origin"
+        elif "high_seas" in dtype or "hss" in dtype or "agreement" in dtype: dtype = "high_seas_sale_agreement"
+        
         data = doc.get("structured_data", {})
         doc_critical = []
         doc_warnings = []
@@ -869,9 +877,10 @@ def run_rule_based_audit(payload: Dict[str, Any]) -> CustomsIntelligenceResponse
         if dtype == "invoice":
             rules_total += 1
             try:
-                if float(str(data.get("total_amount", 0)).replace(",","")) > 0: rules_passed += 1
-                else: doc_critical.append("Total amount must be greater than zero.")
-            except: doc_critical.append("Invalid total amount format.")
+                amt_val = data.get("amount") or data.get("total_amount")
+                if float(str(amt_val or 0).replace(",","")) > 0: rules_passed += 1
+                else: doc_critical.append("Invoice amount must be greater than zero.")
+            except: doc_critical.append("Invalid amount format.")
             
         if dtype in ["bill_of_lading", "packing_list"]:
             rules_total += 1
@@ -882,12 +891,7 @@ def run_rule_based_audit(payload: Dict[str, Any]) -> CustomsIntelligenceResponse
                 else: doc_critical.append("Gross weight cannot be less than Net weight.")
             except: doc_warnings.append("Could not parse weights for logical comparison.")
 
-        if dtype == "packing_list":
-            rules_total += 1
-            if int(data.get("packages", 0)) > 0: rules_passed += 1
-            else: doc_critical.append("Packing list must specify at least 1 package.")
-
-        rule_score = (rules_passed / rules_total * 30) if rules_total > 0 else 30 # Default to 30 if no rules
+        rule_score = (rules_passed / rules_total * 30) if rules_total > 0 else 30 
         
         # Total Doc Confidence
         conf_score = round(completion_score + rule_score)
@@ -895,7 +899,7 @@ def run_rule_based_audit(payload: Dict[str, Any]) -> CustomsIntelligenceResponse
         
         # Collect for Global
         if data.get("bl_number"): cross_bl_map[dtype] = str(data.get("bl_number"))
-        if data.get("document_number") and dtype == "invoice": cross_inv_map[dtype] = str(data.get("document_number"))
+        if data.get("invoice_number"): cross_inv_map[dtype] = str(data.get("invoice_number"))
         if data.get("vessel_name"): cross_vessel_map[dtype] = str(data.get("vessel_name"))
 
         processed_docs.append(CustomsIntelligenceResult(
@@ -907,60 +911,9 @@ def run_rule_based_audit(payload: Dict[str, Any]) -> CustomsIntelligenceResponse
             warnings=doc_warnings,
             critical_issues=doc_critical
         ))
-        
-        global_critical.extend(doc_critical)
-        global_warnings.extend(doc_warnings)
-
-        # STEP 4: DETECT FREIGHT/INSURANCE
-        if str(data.get("currency", "")).upper() == "USD" and data.get("bl_number"): freight_detected = True
-        if data.get("policy_number") or data.get("insured_amount") or data.get("insured_party"): insurance_detected = True
-
-    # 3. Cross-Document Validation Logic
-    cross_issues = []
-    def check_consistency(val_map, label):
-        unique_vals = set(val_map.values())
-        if len(unique_vals) > 1:
-            cross_issues.append(f"Mismatch in {label}: Found {len(unique_vals)} different values across {list(val_map.keys())}")
-            global_critical.append(f"CRITICAL: {label} mismatch across documents.")
-
-    check_consistency(cross_bl_map, "BL Number")
-    check_consistency(cross_vessel_map, "Vessel Name")
-
-    # 4. Global Validation Check
-    MUST_HAVE = ["invoice", "bill_of_lading", "packing_list"]
-    missing_docs = [m for m in MUST_HAVE if m not in present_types]
-    if missing_docs:
-        global_critical.append(f"CRITICAL: Missing required documents: {', '.join(missing_docs)}")
-
-    if not freight_detected and "freight_certificate" not in present_types:
-        missing_docs.append("freight_certificate")
-    if not insurance_detected and "insurance_certificate" not in present_types:
-        missing_docs.append("insurance_certificate")
-
-    # 5. Global Confidence & Penalties
-    avg_conf = sum(doc_confidences) / len(doc_confidences) if doc_confidences else 0
-    overall_conf = round(avg_conf)
-    
-    if global_critical: overall_conf -= 20
-    elif global_warnings: overall_conf -= 10
-    
-    overall_conf = max(0, min(100, overall_conf))
-
-    # 6. Final Clearance Decision
-    # Ready ONLY IF mandatory docs present AND zero critical issues
-    has_mandatory = all(m in present_types for m in MUST_HAVE)
-    clearance_ready = has_mandatory and len(global_critical) == 0
 
     return CustomsIntelligenceResponse(
-        documents=processed_docs,
-        global_validation=GlobalValidationResult(
-            missing_documents=missing_docs,
-            cross_document_issues=cross_issues,
-            critical_issues=list(set(global_critical)),
-            warnings=list(set(global_warnings)),
-            overall_confidence=overall_conf,
-            clearance_ready=clearance_ready
-        )
+        documents=processed_docs
     )
 
 async def run_customs_intelligence_async(payload: Dict[str, Any]) -> CustomsIntelligenceResponse:
@@ -974,11 +927,5 @@ async def run_customs_intelligence_async(payload: Dict[str, Any]) -> CustomsInte
     except Exception as e:
         print(f"[Intelligence] Error in Rule Engine: {e}")
         return CustomsIntelligenceResponse(
-            documents=[],
-            global_validation=GlobalValidationResult(
-                missing_documents=[],
-                cross_document_issues=[f"Rule Engine Error: {str(e)}"],
-                overall_confidence=0,
-                clearance_ready=False
-            )
+            documents=[]
         )

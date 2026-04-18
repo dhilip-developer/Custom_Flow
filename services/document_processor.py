@@ -225,9 +225,14 @@ async def _ocr_scanned_pages(pdf_bytes: bytes, page_indices: list) -> str:
         fallback_doc.close()
         return _clean_text("\n".join(texts))
 
-    # Process all chunks in parallel
-    tasks = [_ocr_chunk(chunk, i + 1) for i, chunk in enumerate(chunks)]
-    results = await asyncio.gather(*tasks)
+    # Process chunks sequentially to respect rate limits
+    results = []
+    for i, chunk in enumerate(chunks):
+        res = await _ocr_chunk(chunk, i + 1)
+        results.append(res)
+        # Small delay between batches to ensure we don't trip quotas
+        if i < len(chunks) - 1:
+            await asyncio.sleep(1.0)
 
     source_doc.close()
 

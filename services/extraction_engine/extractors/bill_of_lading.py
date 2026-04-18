@@ -44,6 +44,11 @@ class BillOfLadingExtractor(BaseExtractor):
             or self.search_block(text, r"Consignee", max_lines=3)
         )
 
+        data["forwarder"] = self.search_value(text, [
+            r"Forwarder\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+            r"Freight\s*Forwarder\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+        ])
+
         data["notify_party"] = self.search_block(text, r"Notify\s*Party", max_lines=3)
 
         data["vessel_name"] = self.search_value(text, [
@@ -81,6 +86,11 @@ class BillOfLadingExtractor(BaseExtractor):
             container_raw = m.group(1) if m else None
         data["container_number"] = normalize_container_number(container_raw) if container_raw else None
 
+        data["container_type"] = self.search_value(text, [
+            r"Container\s*Type\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+            r"(20FT|40FT|40HQ|45FT|REF|FR|OT)",
+        ])
+
         data["seal_number"] = self.search_value(text, [
             r"Seal\s*(?:No\.?|Number|#)\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
         ])
@@ -113,5 +123,11 @@ class BillOfLadingExtractor(BaseExtractor):
         data["description_of_goods"] = self.search_block(
             text, r"Description\s*of\s*(?:Goods|Packages|Cargo)", max_lines=5
         )
+
+        data["measurement"] = self.search_value(text, [
+            r"Measurement\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+            r"Volume\s*[:：]?\s*(.+?)(?:\s{2,}|\n|$)",
+            r"([0-9.]+\s*CBM)",
+        ])
 
         return prune_empty_fields(data)
