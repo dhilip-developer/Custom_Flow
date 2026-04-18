@@ -124,7 +124,6 @@ def extract_data_from_text(text: str) -> Dict[str, Any]:
         },
         "packing_list": {
             "packing_list_number": inv_num.replace("INV", "PL"),
-            "total_packages": 10,
             "declared_value": total_value or 50000.0
         },
         "bill_of_lading": {
