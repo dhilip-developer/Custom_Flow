@@ -3,7 +3,7 @@ Routes for Agent 4: Freight Certificate Detector
 """
 from fastapi import APIRouter, Body, HTTPException
 from models.schemas import FreightCertificateCheckResponse
-import services.document_processor as processor
+import services.intelligence_utils as processor
 
 router = APIRouter()
 
